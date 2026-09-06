@@ -108,7 +108,7 @@ PRIMARY KEY    (date));
 
 
 #calculation funcs
-def meal_calc(conn, meal_list):
+def meal_calc(conn, meal_list):  #meal calc based on manual database
     rows = []
     total = [0.0, 0.0, 0.0, 0.0]
 
@@ -148,27 +148,60 @@ def meal_calc(conn, meal_list):
 
 
 
-def get_food(name):
-    resp = requests.get(("https://api.nal.usda.gov/fdc/v1/foods/search"), params ={"query": name,
+def get_food(name, amount, unit):   #item calc based on usda api 
+    resp = requests.get(("https://api.nal.usda.gov/fdc/v1/foods/search"), params ={"query": name,   #fetch the data 
         "dataType": "Foundation,SR Legacy",
-        "api_key": "DHRgIZAz6E8mHDFVsL6FS2IN77MMv4SCliveAPWr"}).json()
+        "api_key": API_KEY}).json()
+
+    foods = resp.get("foods", [])
+    if not foods:
+        raise ValueError(f"no results for: {name}")
 
     for i,e in zip(range(10), resp["foods"]):
         print(i, e["description"])
 
-    usr_inp = int(input("Please pick the most suitable one: "))
+    usr_inp = int(input("Please pick the most suitable one: "))        #let user pick the item most suitable
+    fdc_id = resp["foods"][usr_inp]["fdcId"]
+
+    resp2 = requests.get(f"https://api.nal.usda.gov/fdc/v1/food/{fdc_id}",params={"api_key": API_KEY, "format": "full"}).json()
 
 
-    for e in resp["foods"][usr_inp]["foodNutrients"]:
-        if e["nutrientId"] in (1003,1004,1005):
-            if e["nutrientId"] == 1003:
-                protein = e["value"]
+    if unit.lower() not in ("g", "gram", "grams", "gr"):         #if user input not in grams
+        portions = resp2.get("foodPortions", [])
+        if not portions:
+            raise ValueError(f"no portion data for: {name}")
+
+        for i, e in enumerate(portions):
+            print(i, e["amount"], e.get("modifier", ""), f"({e['gramWeight']} g)")
+
+        pick = int(input("Please pick a portion: "))           #let user pick the portion most suitable 
+        grams = amount * portions[pick]["gramWeight"]
+    else:
+        grams = amount
+
+    k = grams / 100                             #if in g grams = g. else transform the unit into g. 
+
+
+    protein = carb = fat = 0.0
+    
+    for e in resp2["foodNutrients"]:                      #fetch the items macros
+        if e["nutrient"]["id"] in (1003,1004,1005):
+            if e["nutrient"]["id"] == 1003:
+                protein = e["amount"]
                 continue
-            if e["nutrientId"] == 1004:
-                fat = e["value"]
+            if e["nutrient"]["id"] == 1004:
+                fat = e["amount"]
                 continue
-            if e["nutrientId"] == 1005:
-                carb = e["value"]
-    return (protein,carb,fat)
+            if e["nutrient"]["id"] == 1005:
+                carb = e["amount"]
+
+    protein *= k
+    carb *= k
+    fat *= k
+    kcal = protein*4 + carb*4 + fat*9            
+
+    return (round(kcal), round(protein,1), round(carb,1), round(fat,1))
+
+
 
 
