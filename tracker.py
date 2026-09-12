@@ -2,6 +2,7 @@ import sqlite3
 import requests
 import os
 from dotenv import load_dotenv
+from datetime import date
 
 load_dotenv()
 API_KEY = os.getenv("USDA_API_KEY")
@@ -89,24 +90,6 @@ FOODS = [
     ("doner beef", 22.0, 0.0, 20.0, None),
 ]
 
-conn = get_conn(FOODS_SCHEMA)
-
-for f in FOODS:
-    insert_food(conn, *f)
-
-#entries database
-
-ENTRIES_SCHEMA = """ 
-CREATE TABLE IF NOT EXISTS entries(
-date    TEXT NOT NULL UNIQUE,
-kcal    INTEGER NOT NULL,
-protein INTEGER NOT NULL,
-carb    INTEGER NOT NULL,
-fat     INTEGER NOT NULL,
-PRIMARY KEY    (date));
-"""
-
-
 #calculation funcs
 def meal_calc(conn, meal_list):  #meal calc based on manual database
     rows = []
@@ -149,8 +132,9 @@ def meal_calc(conn, meal_list):  #meal calc based on manual database
 
 
 def get_food(name, amount, unit):   #item calc based on usda api 
-    resp = requests.get(("https://api.nal.usda.gov/fdc/v1/foods/search"), params ={"query": name,   #fetch the data 
-        "dataType": "Foundation,SR Legacy",
+    resp = requests.get("https://api.nal.usda.gov/fdc/v1/foods/search", params ={"query": name,   #fetch for this data 
+        "dataType": "Foundation, SR Legacy",
+        "requireAllWords": "true",
         "api_key": API_KEY}).json()
 
     foods = resp.get("foods", [])
@@ -201,6 +185,70 @@ def get_food(name, amount, unit):   #item calc based on usda api
     kcal = protein*4 + carb*4 + fat*9            
 
     return (round(kcal), round(protein,1), round(carb,1), round(fat,1))
+
+
+
+
+
+#entries database
+
+ENTRIES_SCHEMA = """ 
+CREATE TABLE IF NOT EXISTS entries(
+    date    TEXT PRIMARY KEY,
+    kcal    INTEGER NOT NULL,
+    protein INTEGER NOT NULL,
+    carb    INTEGER NOT NULL,
+    fat     INTEGER NOT NULL
+);
+"""
+
+RELATIONS = ENTRIES_SCHEMA + FOODS_SCHEMA
+
+conn = get_conn(RELATIONS)
+for f in FOODS:
+    insert_food(conn, *f)
+
+
+def entries_add(conn, date, kcal, protein, carb, fat):  #manually add/upsert an entry
+    with conn:
+        conn.execute("""
+        INSERT INTO entries(date, kcal, protein, carb, fat) VALUES(:date, :kcal, :protein, :carb, :fat) 
+        ON CONFLICT(date) DO UPDATE SET
+        kcal = kcal + excluded.kcal,
+        protein = protein + excluded.protein,
+        carb = carb + excluded.carb,
+        fat = fat + excluded.fat 
+        """, 
+            {"date": date,
+            "kcal": kcal,
+            "protein": protein,
+            "carb": carb,
+            "fat": fat})
+
+
+
+def log_search(conn, name, amount, unit, datex=None):
+    if datex == None:
+        datex = date.today().isoformat()
+    (kcal, prot, carb, fat) = get_food(name,amount,unit)
+    entries_add(conn, datex, kcal, prot, carb, fat)
+
+
+log_search(conn, "chicken breast", 250, "g")
+
+
+for row in conn.execute("SELECT * FROM entries"):
+    print(row)
+
+
+
+
+
+
+
+
+    
+
 
 
 
